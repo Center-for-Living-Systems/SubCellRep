@@ -43,7 +43,10 @@ from pptx.util import Inches, Pt
 
 # ---------------------------------------------------------------------------
 _REPO = Path(__file__).resolve().parents[1]
-LAB   = Path("/net/projects/CLS/lding/data/fa_data_analysis/labelling")
+_LAB_CLUSTER = Path("/net/projects/CLS/lding/data/fa_data_analysis/labelling")
+_LAB_LOCAL   = Path("/home/lding/lding/dsicluster_CLS_rsync_folder/data/fa_data_analysis/labelling")
+LAB   = _LAB_LOCAL if _LAB_LOCAL.exists() else _LAB_CLUSTER
+LAB2  = Path("/mnt/p/Liya/FA_patch_group_label")   # Batch 2 per-dataset label CSVs
 RES   = _REPO / "results"
 OUT   = RES / "label_overview.pptx"
 
@@ -121,14 +124,14 @@ B1_COND_COL  = "condition"
 BATCH2_SESSIONS = [
     dict(session="Dataset 2 – Annabel v1", date="Apr 27 2026",  annotator="Annabel", ds="ds2", condition="control",  n=54,  file="pfak_labels_Annabel_20260427_1035.csv"),
     dict(session="Dataset 3 – Ernest ctrl",date="Jul 27 2026",  annotator="Ernest",  ds="ds3", condition="control",  n=111, file="ppax_control_label_Ernest_20260727_1142.csv"),
-    dict(session="Dataset 1 – Annabel",    date="Aug 16 2026",  annotator="Annabel", ds="ds1", condition="ctrl+ycomp",n=1224,file="vinc_combined_label_Annabel_20260816.csv"),
+    dict(session="Dataset 1 – Annabel",    date="Sep 11 2026",  annotator="Annabel", ds="ds1", condition="ctrl+ycomp",n=1739,file="vinc_combined_label_Annabel_20260911.csv"),
     dict(session="Dataset 2 – Annabel v2", date="Aug 2026",     annotator="Annabel", ds="ds2", condition="control",  n=211, file="pfak_combined_label_Annabel_aug2026.csv"),
-    dict(session="Dataset 3 – Ernest all", date="Jul 2026",     annotator="Ernest",  ds="ds3", condition="control",  n=261, file="ppax_combined_label_Ernest_latest.csv"),
+    dict(session="Dataset 3 – Ernest all", date="Sep 11 2026",  annotator="Ernest",  ds="ds3", condition="control",  n=344, file="ppax_combined_label_Ernest_20260911.csv"),
 ]
 BATCH2_FILES = {
-    "ds1": LAB / "vinc_combined_label_Annabel_20260816.csv",
-    "ds2": LAB / "pfak_combined_label_Annabel_aug2026.csv",
-    "ds3": LAB / "ppax_combined_label_Ernest_latest.csv",
+    "ds1": LAB2 / "vinc" / "vinc_combined_label_Annabel_20260911.csv",
+    "ds2": LAB2 / "pfak" / "pfak_combined_label_Annabel_aug2026.csv",
+    "ds3": LAB2 / "ppax" / "ppax_combined_label_Ernest_20260911.csv",
 }
 B2_LABEL_COL = "label"
 
@@ -948,7 +951,8 @@ def _image_df_b2(df: pd.DataFrame, ds_key: str) -> pd.DataFrame:
 
 
 def _fig_patches_per_image(img_dfs: list[tuple], title: str,
-                           ref_n_bars: int | None = None) -> Image.Image:
+                           ref_n_bars: int | None = None,
+                           show_ax_title: bool = True) -> Image.Image:
     """Bar chart: one bar per source image, grouped by dataset panel, coloured by condition.
     img_dfs: list of (ds_key, label, img_df) where img_df has [image_id, condition, n_patches].
     """
@@ -978,8 +982,9 @@ def _fig_patches_per_image(img_dfs: list[tuple], title: str,
         if idf.empty:
             ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
                     ha="center", va="center", fontsize=FS, color="#aaa")
-            ax.set_title(f"{DS_SHORT[ds_key]}\n{batch_label}", fontsize=FS,
-                         fontweight="bold", color=DS_COLORS[ds_key])
+            if show_ax_title:
+                ax.set_title(f"{DS_SHORT[ds_key]}\n{batch_label}", fontsize=FS,
+                             fontweight="bold", color=DS_COLORS[ds_key])
             ax.axis("off")
             continue
 
@@ -1004,11 +1009,12 @@ def _fig_patches_per_image(img_dfs: list[tuple], title: str,
 
         n_imgs   = len(bars_df)
         mean_ppi = bars_df["n_patches"].mean()
-        ax.set_title(
-            f"{DS_SHORT[ds_key]}  ·  {batch_label}\n"
-            f"{n_imgs} images  ·  mean {mean_ppi:.0f} patches/image",
-            fontsize=FS, fontweight="bold", color=DS_COLORS[ds_key], pad=5
-        )
+        if show_ax_title:
+            ax.set_title(
+                f"{DS_SHORT[ds_key]}  ·  {batch_label}\n"
+                f"{n_imgs} images  ·  mean {mean_ppi:.0f} patches/image",
+                fontsize=FS, fontweight="bold", color=DS_COLORS[ds_key], pad=5
+            )
         ax.set_xticks(list(x))
         ax.set_xticklabels(bars_df["short_id"].tolist(), rotation=90,
                            ha="right", fontsize=FS)
@@ -1020,52 +1026,71 @@ def _fig_patches_per_image(img_dfs: list[tuple], title: str,
             pad = (ref_n_bars - len(bars_df)) / 2
             ax.set_xlim(-0.5 - pad, len(bars_df) - 0.5 + pad)
 
-    fig.suptitle(title, fontsize=FS, fontweight="bold", y=1.02)
+    if title and show_ax_title:
+        fig.suptitle(title, fontsize=FS, fontweight="bold", y=1.02)
     fig.tight_layout()
     return _fig_to_pil(fig)
 
 
 def _slide_images_per_batch(prs, b1_dfs, b2_dfs, batch: int):
-    """One slide showing patches-per-image for Batch 1 or Batch 2."""
+    """One slide showing patches-per-image for Batch 1 or Batch 2, three separate panels."""
     if batch == 1:
-        img_dfs = [
+        ds_entries = [
             ("ds1", "Batch 1", _image_df_b1(b1_dfs["ds1"], "ds1")),
             ("ds2", "Batch 1", _image_df_b1(b1_dfs["ds2"], "ds2")),
             ("ds3", "Batch 1", _image_df_b1(b1_dfs["ds3"], "ds3")),
         ]
         title_txt = "Batch 1 (LabelStudio): Images Labeled & Patches per Image"
-        n_imgs = {k: len(d) for k, _, d in img_dfs}
-        subtitle = (
-            f"Dataset 1: {n_imgs['ds1']} images  ·  "
-            f"Dataset 2: {n_imgs['ds2']} images  ·  "
-            f"Dataset 3: {n_imgs['ds3']} images  ·  "
-            "Each bar = one source image. Bars grouped by condition."
-        )
     else:
-        img_dfs = [
+        ds_entries = [
             ("ds1", "Batch 2", _image_df_b2(b2_dfs["ds1"], "ds1")),
             ("ds2", "Batch 2", _image_df_b2(b2_dfs["ds2"], "ds2")),
             ("ds3", "Batch 2", _image_df_b2(b2_dfs["ds3"], "ds3")),
         ]
         title_txt = "Batch 2 (Prototype): Images Labeled & Patches per Image"
-        n_imgs = {k: len(d) for k, _, d in img_dfs}
-        subtitle = (
-            f"Dataset 1: {n_imgs['ds1']} images  ·  "
-            f"Dataset 2: {n_imgs['ds2']} images  ·  "
-            f"Dataset 3: {n_imgs['ds3']} images  ·  "
-            "Each bar = one source image. Bars grouped by condition."
-        )
+
+    n_imgs = {k: len(d) for k, _, d in ds_entries}
+    subtitle = (
+        f"Dataset 1: {n_imgs['ds1']} images  ·  "
+        f"Dataset 2: {n_imgs['ds2']} images  ·  "
+        f"Dataset 3: {n_imgs['ds3']} images  ·  "
+        "Each bar = one source image. Bars grouped by condition."
+    )
 
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _header(slide, title_txt, subtitle=subtitle)
-    img = _fig_patches_per_image(img_dfs, "")
-    _paste_pil(slide, img, 0.3, 1.1, SLIDE_W - 0.6, 6.15)
+
+    # Three panels side by side; titles in PPT text boxes
+    panel_w = 4.0
+    gap     = 0.2
+    x_start = 0.3
+    title_y = 1.1
+    chart_y = title_y + 0.52
+    chart_h = SLIDE_H - chart_y - 0.2
+
+    for i, (ds_key, batch_label, idf) in enumerate(ds_entries):
+        left     = x_start + i * (panel_w + gap)
+        n        = len(idf)
+        mean_ppi = idf["n_patches"].mean() if not idf.empty else 0
+        _txt(slide,
+             f"{DS_SHORT[ds_key]}  ·  {batch_label}",
+             left, title_y, panel_w, 0.28,
+             size=10, bold=True, color=DS_COLORS[ds_key])
+        _txt(slide,
+             f"{n} images  ·  mean {mean_ppi:.0f} patches/image",
+             left, title_y + 0.28, panel_w, 0.24,
+             size=9, color="#555555")
+        img = _fig_patches_per_image([(ds_key, batch_label, idf)], "",
+                                     show_ax_title=False)
+        _paste_pil(slide, img, left, chart_y, panel_w, chart_h)
 
 
 # ---------------------------------------------------------------------------
 # QC Summary (ported + updated from FA_label_QC_summary.py)
 # ---------------------------------------------------------------------------
-_QC_H5_BASE = Path("/net/projects/CLS/lding/data/fa_data_analysis/ae_results/patches/cio_rb")
+_QC_H5_BASE_CLUSTER = Path("/net/projects/CLS/lding/data/fa_data_analysis/ae_results/patches/cio_rb")
+_QC_H5_BASE_LOCAL   = Path("/home/lding/lding/dsicluster_CLS_rsync_folder/data/fa_data_analysis/ae_results/patches/cio_rb")
+_QC_H5_BASE = _QC_H5_BASE_LOCAL if _QC_H5_BASE_LOCAL.exists() else _QC_H5_BASE_CLUSTER
 
 
 class _PatchStore:
@@ -1115,10 +1140,10 @@ def _uid_to_h5fn(uid: str) -> str:
 
 def _load_qc_data():
     """Return (vinc_df, pfak_df, pfak_conflicts, ppax_df) using latest label files."""
-    vinc = pd.read_csv(LAB / "vinc_combined_label_Annabel_20260816.csv")
-    ppax = pd.read_csv(LAB / "ppax_combined_label_Ernest_latest.csv")
+    vinc = pd.read_csv(LAB2 / "vinc" / "vinc_combined_label_Annabel_20260911.csv")
+    ppax = pd.read_csv(LAB2 / "ppax" / "ppax_combined_label_Ernest_20260911.csv")
     pfak_apr = pd.read_csv(LAB / "pfak_labels_Annabel_20260427_1035.csv")
-    pfak_aug = pd.read_csv(LAB / "pfak_combined_label_Annabel_aug2026.csv")
+    pfak_aug = pd.read_csv(LAB2 / "pfak" / "pfak_combined_label_Annabel_aug2026.csv")
     both = pfak_apr.merge(pfak_aug, on="filename", suffixes=("_apr", "_aug"))
     pfak_conflicts = [
         (row["filename"], row["label_apr"], row["label_aug"])
@@ -1253,10 +1278,10 @@ def _slide_qc_overview(prs, vinc, pfak, pfak_conflicts, ppax):
     _rect(slide, 0.2, 4.34, SLIDE_W - 0.4, 2.9, "#eaf2fb")
     _txt(slide, "Updated label files", 0.35, 4.40, 12, 0.28, size=10, bold=True, color="#2c3e50")
     file_lines = [
-        ("ds1", "vinc_combined_label_Annabel_20260816.csv  —  1,224 patches, 0 conflicts"),
+        ("ds1", "vinc_combined_label_Annabel_20260911.csv  —  1,739 patches, 0 conflicts"),
         ("ds2", f"pfak Apr+Aug combined: {len(pfak):,} patches, {n_pfak_conf} conflict(s)  ·  "
                 "Aug-only (no conflicts): pfak_combined_label_Annabel_aug2026.csv (211)"),
-        ("ds3", "ppax_combined_label_Ernest_latest.csv  —  261 patches, 0 conflicts (available sessions)"),
+        ("ds3", "ppax_combined_label_Ernest_20260911.csv  —  344 patches, 8 conflicts resolved (new labels kept)"),
     ]
     fy = 4.80
     for ds_key, desc in file_lines:
@@ -1323,7 +1348,7 @@ _ANN_B1_CTRL   = LAB / "annabel_control_project-17-at-2026-02-23-21-26-d1937bbb.
 _ANN_B1_YCOMP  = LAB / "annabel_ycomp_project-18-at-2026-02-23-21-26-7bf8956c.csv"
 _MARG_B1_CTRL  = LAB / "Margaret_Control_V2_project-19-at-2026-02-09-21-46-5552392a.csv"
 _MARG_B1_YCOMP = LAB / "Margaret_Ycomp_V2_project-20-at-2026-02-09-21-40-9d1e4d7c.csv"
-_B2_DS1_FILE   = LAB / "vinc_combined_label_Annabel_20260816.csv"
+_B2_DS1_FILE   = LAB2 / "vinc" / "vinc_combined_label_Annabel_20260911.csv"
 
 _AD_MAP_2CLS = {
     "No adhesion":      "No adhesion",
