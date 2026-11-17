@@ -150,6 +150,8 @@ def main():
     ap.add_argument("--latent-dim", type=int, default=64)
     ap.add_argument("--proj-dim",   type=int, default=32)
     ap.add_argument("--device",     default="cpu")
+    ap.add_argument("--save-json",  default=None,
+                    help="Append results to this JSON file (key=run_tag).")
     args = ap.parse_args()
 
     LAB_DIR  = DATA / "labelling" / args.run_tag
@@ -175,6 +177,20 @@ def main():
     if accs:
         print(f"\n  Mean ± std: {np.mean(accs):.4f} ± {np.std(accs):.4f}")
         print(f"  Per-fold:   {[f'{a:.4f}' for a in accs]}")
+
+        if args.save_json:
+            import json
+            out_path = Path(args.save_json)
+            existing = {}
+            if out_path.exists():
+                existing = json.loads(out_path.read_text())
+            existing[args.run_tag] = {
+                "accs": [round(a, 6) for a in accs],
+                "mean": round(float(np.mean(accs)), 6),
+                "std":  round(float(np.std(accs)),  6),
+            }
+            out_path.write_text(json.dumps(existing, indent=2))
+            print(f"\n  Results saved → {out_path}")
 
 
 if __name__ == "__main__":

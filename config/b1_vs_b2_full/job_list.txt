@@ -1,0 +1,4 @@
+config/b1_vs_b2_full/b1full_supcon.yaml
+config/b1_vs_b2_full/b1full_semisup.yaml
+config/b1_vs_b2_full/b2full_supcon.yaml
+config/b1_vs_b2_full/b2full_semisup.yaml

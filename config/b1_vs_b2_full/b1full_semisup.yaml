@@ -1,0 +1,59 @@
+# =============================================================================
+# B1 full labels — semisup AE  (DS1 vinc ctrl+ycomp, binary adhesion)
+# image-grouped 80/20 train/val split; only model_final.pt kept
+# =============================================================================
+root_folder : "/net/projects/CLS/lding/data/fa_data_analysis"
+
+data:
+  patch_dirs:
+    - path           : root_folder + "/ae_results/patches/cio/vinc/control/tiff_patches32_mr10"
+      frame_dir      : root_folder + "/ae_results/source_frames/cio_mode_prt/vinc/control"
+      condition      : 0
+      condition_name : "control"
+    - path           : root_folder + "/ae_results/patches/cio/vinc/ycomp/tiff_patches32_mr10"
+      frame_dir      : root_folder + "/ae_results/source_frames/cio_mode_prt/vinc/ycomp"
+      condition      : 1
+      condition_name : "ycomp"
+output:
+  result_dir : root_folder + "/ae_results/contrastive_run/b1_vs_b2_full/b1full_semisup"
+
+model:
+  model_type   : "semisup"
+  latent_dim   : 12
+  input_ps     : 32
+  no_ch        : 1
+  BN_flag      : false
+  dropout_flag : false
+
+  num_classes  : 2
+  lambda_recon : 1.0
+  lambda_cls   : 1.0
+
+annotation:
+  annotation_file : root_folder + "/labelling/b1_vs_b2_full/b1_full.csv"
+  label_col       : "label"
+  filename_col    : "unique_ID"
+  label_order:
+    - "No adhesion"
+    - "adhesion"
+
+training:
+  epochs                  : 500
+  lr                      : 0.001
+  batch_size              : 128
+  val_split               : 0.2
+  group_split             : true
+  loss_norm_flag          : false
+  weight_decay            : 0.0001
+  early_stopping_patience : 0
+  min_epochs_for_best     : 200
+  warmup_epochs           : 200
+  lr_scheduler            : "cosine"
+  lr_min                  : 1e-5
+
+reconstruction:
+  save_recon : false
+
+misc:
+  device    : "auto"
+  log_level : "INFO"

@@ -2,18 +2,22 @@
 """
 eval_le_b2_fa4_perclass.py
 
-For every completed DS1 B2 LE run (le_b2_lat12p8), train a 5-class
-(FA subtype) LightGBM classifier using training patches that have B2 FA4
-labels, then compute per-class F1 on the B2-labeled test patches.
+For every DS1 B2 LE run (le_b2_lat12p8), train the same BINARY
+(adhesion vs No adhesion) LGBM classifier as the standard LE benchmark,
+then evaluate per-FA-subtype recall on the test set using B2 FA4 labels.
+
+This answers: "within each FA subtype, how often does the binary classifier
+get it right?" — e.g. focal complex patches are all "adhesion" true class;
+what fraction does LGBM correctly call adhesion?
 
 Outputs (EVAL_DIR):
   le_b2_fa4_perclass_supcon_ds1.csv
   le_b2_fa4_perclass_cp_ds1.csv
   le_b2_fa4_perclass_il_ds1.csv
 
-Columns: fold, budget, repeat, n_train, n_test, bal_acc, macro_f1,
-         f1_No adhesion, f1_focal adhesion, f1_Nascent Adhesion,
-         f1_focal complex, f1_fibrillar adhesion
+Columns: fold, budget, repeat, n_train, n_test, bal_acc,
+         acc_No adhesion, acc_focal adhesion, acc_Nascent Adhesion,
+         acc_focal complex, acc_fibrillar adhesion
 
 Usage
 -----
@@ -31,8 +35,8 @@ import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import balanced_accuracy_score, f1_score
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import balanced_accuracy_score
+from sklearn.preprocessing import StandardScaler
 
 DATA      = Path("/net/projects/CLS/lding/data/fa_data_analysis")
 EVAL_DIR  = DATA / "ae_results" / "features" / "eval_results"
@@ -109,7 +113,6 @@ def _run_eval(fold_splits, b2_fa4, feat_df, job_names, classifier,
         else:
             feats = feat_df
 
-        # annotation CSV: strip _lat12p8 from run name
         ann_name = name.replace("_lat12p8", "")
         ann_path = ANN_DIR / f"{ann_name}.csv"
         if not ann_path.exists():
@@ -117,57 +120,70 @@ def _run_eval(fold_splits, b2_fa4, feat_df, job_names, classifier,
             continue
 
         ann = pd.read_csv(ann_path)
-        train_fns = set(ann["unique_ID"].apply(_h2u))
+        train_fns = list(ann["unique_ID"].apply(_h2u))
 
-        train_fns_b2 = [fn for fn in train_fns if fn in b2_fa4]
+        # Test set: fold patches not in training, that have B2 FA4 labels
         test_fs = fold_splits[fold_splits["fold"] == fold].copy()
-        test_fs = test_fs[~test_fs["fn"].isin(train_fns)]
-        test_fs_b2 = test_fs[test_fs["fn"].isin(b2_fa4)]
+        test_fs = test_fs[~test_fs["fn"].isin(set(train_fns))]
+        test_fs = test_fs[test_fs["fn"].isin(b2_fa4)]
 
-        if len(train_fns_b2) == 0 or len(test_fs_b2) == 0:
+        if len(train_fns) == 0 or len(test_fs) == 0:
             n_skip += 1
             continue
 
-        X_tr_raw = feats.reindex(train_fns_b2).values
-        X_te_raw = feats.reindex(test_fs_b2["fn"]).values
+        X_tr_raw = feats.reindex(train_fns).values
+        X_te_raw = feats.reindex(test_fs["fn"]).values
 
         tr_ok = ~np.isnan(X_tr_raw).any(axis=1)
         te_ok = ~np.isnan(X_te_raw).any(axis=1)
-
         X_tr = X_tr_raw[tr_ok]
         X_te = X_te_raw[te_ok]
-        y_tr = np.array([b2_fa4[fn] for fn in train_fns_b2])[tr_ok]
-        y_te = test_fs_b2["fn"].map(b2_fa4).values[te_ok]
+
+        # Binary labels: adhesion=1, No adhesion=0
+        y_tr = np.array([1 if l == "adhesion" else 0
+                         for l in ann["label"].tolist()])[tr_ok]
+        test_fns_ok = test_fs["fn"].values[te_ok]
+        y_te = np.array([1 if b2_fa4[fn] != "No adhesion" else 0
+                         for fn in test_fns_ok])
 
         if len(np.unique(y_tr)) < 2:
             n_skip += 1
             continue
 
-        le = LabelEncoder().fit(FA4_CLASSES)
-        y_tr_enc = le.transform(y_tr)
-        y_te_enc = le.transform(y_te)
-
         if classifier == "logreg":
             sc = StandardScaler().fit(X_tr)
             clf = LogisticRegression(max_iter=2000, class_weight="balanced",
-                                     multi_class="multinomial", random_state=42)
-            clf.fit(sc.transform(X_tr), y_tr_enc)
+                                     random_state=42)
+            clf.fit(sc.transform(X_tr), y_tr)
             y_pred = clf.predict(sc.transform(X_te))
         else:
             clf = LGBMClassifier(**LGBM_PARAMS)
-            clf.fit(X_tr, y_tr_enc)
+            clf.fit(X_tr, y_tr)
             y_pred = clf.predict(X_te)
 
-        bal_acc  = balanced_accuracy_score(y_te_enc, y_pred)
-        f1_per   = f1_score(y_te_enc, y_pred, labels=range(len(FA4_CLASSES)),
-                            average=None, zero_division=0)
-        macro_f1 = f1_score(y_te_enc, y_pred, average="macro", zero_division=0)
+        bal_acc = balanced_accuracy_score(y_te, y_pred)
 
+        # Per-FA-subtype recall and precision from the binary classifier
+        fa4_labels  = np.array([b2_fa4[fn] for fn in test_fns_ok])
+        n_pred_ad   = int((y_pred == 1).sum())
+        n_pred_noad = int((y_pred == 0).sum())
         row = dict(fold=fold, budget=budget, repeat=repeat,
                    n_train=int(tr_ok.sum()), n_test=int(te_ok.sum()),
-                   bal_acc=round(bal_acc, 6), macro_f1=round(macro_f1, 6))
-        for cls, f1 in zip(FA4_CLASSES, f1_per):
-            row[f"f1_{cls}"] = round(float(f1), 6)
+                   bal_acc=round(bal_acc, 6))
+
+        for cls in FA4_CLASSES:
+            mask = fa4_labels == cls
+            if mask.sum() == 0:
+                row[f"acc_{cls}"]  = np.nan
+                row[f"prec_{cls}"] = np.nan
+                continue
+            expected = 0 if cls == "No adhesion" else 1
+            acc = (y_pred[mask] == expected).mean()
+            row[f"acc_{cls}"] = round(float(acc), 6)
+            n_denom = n_pred_ad if expected == 1 else n_pred_noad
+            tp_sg   = int((y_pred[mask] == expected).sum())
+            row[f"prec_{cls}"] = round(tp_sg / n_denom, 6) if n_denom > 0 else np.nan
+
         results.append(row)
 
     print(f"  Done: {len(results)} rows, {n_skip} skipped")
@@ -214,10 +230,10 @@ def main():
             continue
         num = df[df["budget"] != "all"].copy()
         num["b"] = num["budget"].astype(int)
-        f1_cols = [f"f1_{c}" for c in FA4_CLASSES if f"f1_{c}" in num.columns]
-        s = num.groupby("b")[f1_cols].mean()
-        s.columns = [c.replace("f1_", "") for c in s.columns]
-        print(f"\n{label} mean per-class F1:\n{s.round(3).to_string()}")
+        acc_cols = [f"acc_{c}" for c in FA4_CLASSES if f"acc_{c}" in num.columns]
+        s = num.groupby("b")[acc_cols].mean()
+        s.columns = [c.replace("acc_", "") for c in s.columns]
+        print(f"\n{label} mean per-subtype recall:\n{s.round(3).to_string()}")
 
 
 if __name__ == "__main__":

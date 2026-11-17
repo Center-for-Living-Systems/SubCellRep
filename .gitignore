@@ -1,3 +1,6 @@
+# Python multiprocessing temp dirs (PyTorch DataLoader)
+pymp-*/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -212,3 +215,9 @@ slides/
 logs/slurm/
 *.pptx
 .~lock.*.pptx#
+
+/eval_results/
+/results/
+
+/.claude/settings.local.json
+/.claude/scheduled_tasks.lock

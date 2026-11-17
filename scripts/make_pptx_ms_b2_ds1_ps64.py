@@ -270,7 +270,7 @@ def _slide_setup(prs):
         model = ContrastiveAE(latent_dim=lat, proj_dim=proj, input_ps=ps,
                               no_ch=1, noise_prob=0.0, BN_flag=False, output_sigmoid=False)
         n_params = sum(p.numel() for p in model.parameters()) / 1e6
-        status = "✓ done" if ps == 64 and lat == 64 else "queued"
+        status = "✓ done"
         rows_data.append([label, f"{ps}×{ps}", lat, proj, f"{n_params:.2f}M", note, status])
     tbl = ax.table(cellText=rows_data, colLabels=headers,
                    loc="center", cellLoc="center")
@@ -599,15 +599,24 @@ def main():
     _slide_setup(prs)
 
     print("Slide 4: classification results...")
-    results = {
+    _RESULTS_JSON = REPO / "results" / "ms_b2_ds1_ps64_eval.json"
+    _HARDCODED = {
         "ms_b2_ds1_ps64_lat64p32": {
             "accs": [0.9483, 0.9786, 0.9675, 0.9601, 0.9524],
             "mean": 0.9614,
             "std":  0.0109,
         },
-        "ms_b2_ds1_ps32_lat12p8":  None,
-        "ms_b2_ds1_ps32_lat64p32": None,
-        "ms_b2_ds1_ps64_lat12p8":  None,
+    }
+    if _RESULTS_JSON.exists():
+        import json
+        _from_file = json.loads(_RESULTS_JSON.read_text())
+        _HARDCODED.update(_from_file)
+        print(f"  Loaded eval results from {_RESULTS_JSON}")
+    results = {
+        "ms_b2_ds1_ps64_lat64p32": _HARDCODED.get("ms_b2_ds1_ps64_lat64p32"),
+        "ms_b2_ds1_ps32_lat12p8":  _HARDCODED.get("ms_b2_ds1_ps32_lat12p8"),
+        "ms_b2_ds1_ps32_lat64p32": _HARDCODED.get("ms_b2_ds1_ps32_lat64p32"),
+        "ms_b2_ds1_ps64_lat12p8":  _HARDCODED.get("ms_b2_ds1_ps64_lat12p8"),
     }
     _slide_cls_results(prs, results)
 
